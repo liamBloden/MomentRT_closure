@@ -1,89 +1,78 @@
-# main_debug.py
+# main_test_debug.py
+# Manual stepping of the M1 solver with a NaN guard, to catch the first bad
+# step. Drives the source through the equilibrium field E_eq (emission
+# c*kappa_a*E_eq) rather than the explicit S_E path of main_benchmark.py.
+#
+# Run:  python main_test_debug.py              (GPU via autocvd)
+#       M1_DEVICE=cpu python main_test_debug.py (CPU)
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+from momentRTjax.devices import select_device
+select_device()                       # must precede the jax import
 
 import numpy as np
 import jax
 import jax.numpy as jnp
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# Optional: improve numerical headroom
-try:
-    jax.config.update("jax_enable_x64", True)
-except Exception:
-    pass
+jax.config.update("jax_enable_x64", True)
 # Uncomment to debug without JIT:
 # jax.config.update("jax_disable_jit", True)
 
 from momentRTjax.momentRT import (
-    M1Config,  # your config dataclass (keep frozen if used as static)
-    advance,   # we'll NOT use this in debug; we step manually to catch first NaN
+    M1Config, step_m1, cfl_dt, enforce_positivity_and_causality,
 )
 
-# --------------------------
-# Import hardened helpers (add these to your momentRT module if not there yet)
-# --------------------------
-def enforce_positivity_and_causality(E, F, c, epsE=1e-12):
-    Ep = jnp.maximum(E, epsE)
-    Fmag = jnp.linalg.norm(F, axis=-1)
-    limit = jnp.minimum(1.0, (c * Ep) / (Fmag + 1e-30))
-    Fp = F * limit[..., None]
-    return Ep, Fp
 
-# we’ll call your compiled step, but wrap with a post-check:
-from functools import partial
-from momentRTjax.momentRT import step_m1 as _step_m1  # jitted
-
-def step_m1_safe(U, dt, cfg, kappa_a, kappa_t, E_eq):
-    U = _step_m1(U, dt, cfg, kappa_a, kappa_t, E_eq)
-    # Final safety clamp (in case sources drive weird transients)
+def step_m1_safe(U, dt, cfg, kappa_a, kappa_t, E_eq, S_E, S_F):
+    """Compiled step followed by an extra positivity/causality clamp."""
+    U = step_m1(U, dt, cfg, kappa_a, kappa_t, E_eq, S_E, S_F)
     E = jnp.maximum(U[..., 0], cfg.epsE)
     F = U[..., 1:4]
     E, F = enforce_positivity_and_causality(E, F, cfg.c, epsE=cfg.epsE)
     return jnp.concatenate([E[..., None], F], axis=-1)
 
+
 # --------------------------
-# Problem setup (very safe)
+# Problem setup
 # --------------------------
 Nx, Ny, Nz = 64, 64, 64
 dx = dy = dz = 1.0
 c = 1.0
-cfg = M1Config(c=c, dx=dx, dy=dy, dz=dz, cfl=0.2, epsE=1e-12)
+cfg = M1Config(c=c, dx=dx, dy=dy, dz=dz, cfl=0.2, epsE=1e-12, bc="outflow")
 
-# Opacities (keep >0 for absorber/emitter; small scattering damps early transients)
-kappa_a_val = 0.05    # MUST be > 0
-kappa_t_val = 1e-3
-
+kappa_a_val = 0.05    # must be > 0 when the source is expressed through E_eq
+kappa_s_val = 0.0
+kappa_t_val = kappa_a_val + kappa_s_val   # total opacity on the flux (see main_benchmark.py)
 assert kappa_a_val > 0.0, "kappa_a_val must be > 0 when using E_eq as source."
 
 kappa_a = jnp.ones((Nx, Ny, Nz)) * kappa_a_val
 kappa_t = jnp.ones((Nx, Ny, Nz)) * kappa_t_val
 
-# Source power and equilibrium energy in the source cell
-L = 1e-1  # keep modest; you can scale up later
+L = 1e-1
 cx, cy, cz = Nx // 2, Ny // 2, Nz // 2
 cell_vol = dx * dy * dz
-E_eq = jnp.zeros((Nx, Ny, Nz))
-E_eq_center = L / (c * kappa_a_val * cell_vol)  # finite if kappa_a_val>0
-E_eq = E_eq.at[cx, cy, cz].set(E_eq_center)
+E_eq_center = L / (c * kappa_a_val * cell_vol)   # emission c*kappa_a*E_eq = L/V
+E_eq = jnp.zeros((Nx, Ny, Nz)).at[cx, cy, cz].set(E_eq_center)
 
-# Initial condition: strictly positive E, zero F
+# No explicit volumetric sources in this script
+S_E = jnp.zeros((Nx, Ny, Nz))
+S_F = jnp.zeros((Nx, Ny, Nz, 3))
+
 E0 = jnp.ones((Nx, Ny, Nz)) * 1e-6
 F0 = jnp.zeros((Nx, Ny, Nz, 3))
 U = jnp.concatenate([E0[..., None], F0], axis=-1)
 
-# --------------------------
-# Stable time step (more conservative than usual 3D CFL)
-# --------------------------
-dt = 0.12 * min(dx, dy, dz) / (c * np.sqrt(3))  # very safe CFL
+dt = cfl_dt(dx, dy, dz, c, cfg.cfl)
+nsteps = int(os.environ.get("NSTEPS", 400))
+print(f"[debug] dt = {dt:.4f}, nsteps = {nsteps}")
 
 # --------------------------
 # Manual stepping with NaN guard
 # --------------------------
-nsteps = 400
 for n in range(nsteps):
-    U = step_m1_safe(U, dt, cfg, kappa_a, kappa_t, E_eq)
-    # Check for NaNs/Inf as soon as they appear
+    U = step_m1_safe(U, dt, cfg, kappa_a, kappa_t, E_eq, S_E, S_F)
     if bool(jnp.isnan(U).any() | jnp.isinf(U).any()):
         Ecur = U[..., 0]; Fcur = U[..., 1:4]
         print(f"[NaN] at step {n}")
@@ -91,13 +80,12 @@ for n in range(nsteps):
         print("  |F| max:", float(jnp.nanmax(jnp.linalg.norm(Fcur, axis=-1))))
         print("  E_eq_center:", float(E_eq_center))
         print("  kappa_a_val:", kappa_a_val, "kappa_t_val:", kappa_t_val, "dt:", dt)
-        raise SystemExit
+        raise SystemExit(1)
 
-# If we get here, it’s clean
 print("OK: no NaNs after", nsteps, "steps.")
 
 # --------------------------
-# Build analytic reference for plots
+# Analytic reference and metrics
 # --------------------------
 x = (jnp.arange(Nx) - cx) * dx
 y = (jnp.arange(Ny) - cy) * dy
@@ -112,15 +100,11 @@ E_an = (L / (4.0 * jnp.pi * c)) * jnp.exp(-kappa_a_val * r) / jnp.maximum(r*r, e
 ux = X / jnp.maximum(r, eps_r)
 uy = Y / jnp.maximum(r, eps_r)
 uz = Z / jnp.maximum(r, eps_r)
-F_an = (L / (4.0 * jnp.pi)) * jnp.exp(-kappa_a_val * r) / jnp.maximum(r*r, eps_r)
-F_an_vec = jnp.stack([F_an * ux, F_an * uy, F_an * uz], axis=-1)
+F_an_vec = jnp.stack([c * E_an * ux, c * E_an * uy, c * E_an * uz], axis=-1)
 
-# Mask borders & center for metrics
-mask = jnp.ones_like(E_num, dtype=bool)
-mask = mask.at[0, :, :].set(False).at[-1, :, :].set(False)
-mask = mask.at[:, 0, :].set(False).at[:, -1, :].set(False)
-mask = mask.at[:, :, 0].set(False).at[:, :, -1].set(False)
-mask = mask.at[cx, cy, cz].set(False)
+# Only cells the light front has reached (minus a margin) are in steady state.
+r_reached = max(0.0, c * dt * nsteps - 4.0 * dx)
+mask = (r >= 2.0 * dx) & (r <= min(r_reached, 0.45 * Nx * dx))
 
 rel_err_E = jnp.abs((E_num - E_an) / (E_an + 1e-12))
 mean_rel_err_E = float(jnp.mean(rel_err_E[mask]))
@@ -129,26 +113,28 @@ Fhat_num = jnp.where((Fmag > 0)[..., None], F_num / (Fmag[..., None] + 1e-30), 0
 Fhat_an  = jnp.stack([ux, uy, uz], axis=-1)
 cos_sim = jnp.clip(jnp.sum(Fhat_num * Fhat_an, axis=-1), -1.0, 1.0)
 mean_cos = float(jnp.mean(cos_sim[mask]))
+print(f"[M1] steady-state shell: 2 <= r <= {float(min(r_reached, 0.45*Nx*dx)):.1f} ({int(mask.sum())} cells)")
 print(f"[M1] mean relative error E (masked): {mean_rel_err_E:.3e}")
 print(f"[M1] mean cosine similarity(F, r̂) (masked): {mean_cos:.3f}")
 
 # --------------------------
 # Plots (XY mid-slice)
 # --------------------------
-outdir = "plots_m1_debug"
+outdir = os.environ.get("SAVE_DIR", "plots_m1_debug")
 os.makedirs(outdir, exist_ok=True)
 mid = cz
+E_an_plot = E_an.at[cx, cy, cz].set(E_num[cx, cy, cz])
 
 plt.figure(figsize=(12, 4))
 plt.subplot(1, 3, 1)
 plt.imshow(np.log10(np.asarray(E_num[:, :, mid]) + 1e-12), origin='lower', cmap='inferno')
 plt.title("log10 E (numeric)"); plt.colorbar()
 plt.subplot(1, 3, 2)
-plt.imshow(np.log10(np.asarray(E_an[:, :, mid]) + 1e-12), origin='lower', cmap='inferno')
+plt.imshow(np.log10(np.asarray(E_an_plot[:, :, mid]) + 1e-12), origin='lower', cmap='inferno')
 plt.title("log10 E (analytic)"); plt.colorbar()
 plt.subplot(1, 3, 3)
 res = np.log10(np.asarray(rel_err_E[:, :, mid]) + 1e-12)
-plt.imshow(res, origin='lower', cmap='magma'); plt.title("log10 |rel. err E|"); plt.colorbar()
+plt.imshow(res, origin='lower', cmap='magma', vmin=-3, vmax=0); plt.title("log10 |rel. err E|"); plt.colorbar()
 plt.tight_layout(); plt.savefig(os.path.join(outdir, "E_xy.png"), dpi=150); plt.close()
 
 Fmag_num = jnp.linalg.norm(F_num, axis=-1)
@@ -163,8 +149,7 @@ plt.imshow(np.log10(np.asarray(Fmag_an[:, :, mid]) + 1e-12), origin='lower', cma
 plt.title("log10 |F| (analytic)"); plt.colorbar()
 plt.subplot(1, 3, 3)
 resF = np.log10(np.asarray(jnp.abs((Fmag_num - Fmag_an) / (Fmag_an + 1e-12))[:, :, mid]) + 1e-12)
-plt.imshow(resF, origin='lower', cmap='magma'); plt.title("log10 |rel. err |F||"); plt.colorbar()
+plt.imshow(resF, origin='lower', cmap='magma', vmin=-3, vmax=0); plt.title("log10 |rel. err |F||"); plt.colorbar()
 plt.tight_layout(); plt.savefig(os.path.join(outdir, "F_xy.png"), dpi=150); plt.close()
 
 print(f"Saved plots to: {outdir}")
-
