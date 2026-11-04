@@ -63,15 +63,18 @@ def m1_closure(E: Array, F: Array, c: float, eps: float = 1e-12):
 def physical_flux(axis: int, E: Array, F: Array, P6, c: float):
     """
     Flux of the conserved state U = [E, Fx, Fy, Fz] along `axis`, given the
-    pressure tensor components P6 = (P_xx, P_yy, P_zz, P_xy, P_xz, P_yz):
-      axis 0: [ c F_x,  c^2 P_xx,  c^2 P_xy,  c^2 P_xz ]
-      axis 1: [ c F_y,  c^2 P_xy,  c^2 P_yy,  c^2 P_yz ]
-      axis 2: [ c F_z,  c^2 P_xz,  c^2 P_yz,  c^2 P_zz ]
+    pressure tensor components P6 = (P_xx, P_yy, P_zz, P_xy, P_xz, P_yz).
+    F is the physical energy flux (|F| <= c E, as assumed by the closure and
+    the limiter), so the system is  dE/dt + div F = 0,  dF/dt + c^2 div P = 0:
+      axis 0: [ F_x,  c^2 P_xx,  c^2 P_xy,  c^2 P_xz ]
+      axis 1: [ F_y,  c^2 P_xy,  c^2 P_yy,  c^2 P_yz ]
+      axis 2: [ F_z,  c^2 P_xz,  c^2 P_yz,  c^2 P_zz ]
+    Wave speeds are +-c (free streaming), matching the HLLE bound and cfl_dt.
     """
     P_xx, P_yy, P_zz, P_xy, P_xz, P_yz = P6
     rows = ((P_xx, P_xy, P_xz), (P_xy, P_yy, P_yz), (P_xz, P_yz, P_zz))[axis]
     c2 = c * c
-    return jnp.stack([c * F[..., axis], c2 * rows[0], c2 * rows[1], c2 * rows[2]], axis=-1)
+    return jnp.stack([F[..., axis], c2 * rows[0], c2 * rows[1], c2 * rows[2]], axis=-1)
 
 def flux_x(E: Array, F: Array, c: float):
     return physical_flux(0, E, F, m1_closure(E, F, c), c)
