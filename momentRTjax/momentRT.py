@@ -2,6 +2,9 @@
 # Minimal 3D gray radiative transfer (two-moment M1 closure) with HLLE,
 # implicit absorption/scattering, and explicit volumetric sources.
 # JAX implementation (CPU/GPU/TPU). First-order FV; MUSCL can be added later.
+#
+# Boundary conditions: "outflow" (zero-gradient ghost cells, default) or
+# "periodic". Selected through M1Config.bc.
 
 from __future__ import annotations
 from dataclasses import dataclass
@@ -57,49 +60,35 @@ def m1_closure(E: Array, F: Array, c: float, eps: float = 1e-12):
 # Physical fluxes per direction
 # ---------------------------
 
+def physical_flux(axis: int, E: Array, F: Array, P6, c: float):
+    """
+    Flux of the conserved state U = [E, Fx, Fy, Fz] along `axis`, given the
+    pressure tensor components P6 = (P_xx, P_yy, P_zz, P_xy, P_xz, P_yz):
+      axis 0: [ c F_x,  c^2 P_xx,  c^2 P_xy,  c^2 P_xz ]
+      axis 1: [ c F_y,  c^2 P_xy,  c^2 P_yy,  c^2 P_yz ]
+      axis 2: [ c F_z,  c^2 P_xz,  c^2 P_yz,  c^2 P_zz ]
+    """
+    P_xx, P_yy, P_zz, P_xy, P_xz, P_yz = P6
+    rows = ((P_xx, P_xy, P_xz), (P_xy, P_yy, P_yz), (P_xz, P_yz, P_zz))[axis]
+    c2 = c * c
+    return jnp.stack([c * F[..., axis], c2 * rows[0], c2 * rows[1], c2 * rows[2]], axis=-1)
+
 def flux_x(E: Array, F: Array, c: float):
-    """
-    x-direction flux:
-      Fx(U) = [ c F_x,  c^2 P_xx,  c^2 P_xy,  c^2 P_xz ].
-    """
-    P_xx, _, _, P_xy, P_xz, _ = m1_closure(E, F, c)
-    Fx0 = c * F[..., 0]
-    Fx1 = c * c * P_xx
-    Fx2 = c * c * P_xy
-    Fx3 = c * c * P_xz
-    return jnp.stack([Fx0, Fx1, Fx2, Fx3], axis=-1)
+    return physical_flux(0, E, F, m1_closure(E, F, c), c)
 
 def flux_y(E: Array, F: Array, c: float):
-    """
-    y-direction flux:
-      Fy(U) = [ c F_y,  c^2 P_xy,  c^2 P_yy,  c^2 P_yz ].
-    """
-    P_xx, P_yy, _, P_xy, _, P_yz = m1_closure(E, F, c)
-    Fy0 = c * F[..., 1]
-    Fy1 = c * c * P_xy
-    Fy2 = c * c * P_yy
-    Fy3 = c * c * P_yz
-    return jnp.stack([Fy0, Fy1, Fy2, Fy3], axis=-1)
+    return physical_flux(1, E, F, m1_closure(E, F, c), c)
 
 def flux_z(E: Array, F: Array, c: float):
-    """
-    z-direction flux:
-      Fz(U) = [ c F_z,  c^2 P_xz,  c^2 P_yz,  c^2 P_zz ].
-    """
-    _, _, P_zz, _, P_xz, P_yz = m1_closure(E, F, c)
-    Fz0 = c * F[..., 2]
-    Fz1 = c * c * P_xz
-    Fz2 = c * c * P_yz
-    Fz3 = c * c * P_zz
-    return jnp.stack([Fz0, Fz1, Fz2, Fz3], axis=-1)
+    return physical_flux(2, E, F, m1_closure(E, F, c), c)
 
 
 # ---------------------------
 # HLLE numerical flux (symmetric speeds ±c)
 # ---------------------------
 
-def hlle(F_L: Array, F_R: Array, U_L: Array, U_R: Array, smax: float):
-    """HLLE flux with sL=-smax, sR=+smax."""
+def hlle(F_L: Array, F_R: Array, U_L: Array, U_R: Array, smax):
+    """HLLE flux with sL=-smax, sR=+smax (smax: scalar or per-face array)."""
     return 0.5 * (F_L + F_R) - 0.5 * smax * (U_R - U_L)
 
 
@@ -107,47 +96,69 @@ def hlle(F_L: Array, F_R: Array, U_L: Array, U_R: Array, smax: float):
 # Finite-volume utilities
 # ---------------------------
 
-def periodic_roll(a: Array, shift: int, axis: int):
-    return jnp.roll(a, shift=shift, axis=axis)
+_PAD_MODE = {"periodic": "wrap", "outflow": "edge"}
 
-def divergence_flux(U: Array, dx: float, dy: float, dz: float, c: float, epsE: float = 1e-12):
+def pad_ghost(U: Array, axis: int, bc: str) -> Array:
+    """Add one ghost cell on each side of `axis` according to the BC."""
+    if bc not in _PAD_MODE:
+        raise ValueError(f"Unknown bc '{bc}'. Use one of {list(_PAD_MODE)}.")
+    pad = [(0, 0)] * U.ndim
+    pad[axis] = (1, 1)
+    return jnp.pad(U, pad, mode=_PAD_MODE[bc])
+
+def _slice_axis(a: Array, axis: int, start, stop) -> Array:
+    idx = [slice(None)] * a.ndim
+    idx[axis] = slice(start, stop)
+    return a[tuple(idx)]
+
+def divergence_flux_generic(U: Array, aux, closure_fn,
+                            dx: float, dy: float, dz: float, c: float,
+                            epsE: float = 1e-12, bc: str = "outflow",
+                            speed_fn=None):
     """
-    Compute ∇·F with HLLE in x, y, z. Periodic BC.
-    U shape: (Nx, Ny, Nz, 4)  with [E, Fx, Fy, Fz].
-    Returns: same shape as U (divergence of the conserved fluxes).
+    Compute ∇·F with HLLE in x, y, z for an arbitrary closure.
+
+    U       : (Nx, Ny, Nz, 4)  conserved state [E, Fx, Fy, Fz]
+    aux     : (Nx, Ny, Nz, k) or None — extra cell-centred fields the closure
+              needs (e.g. the Eddington tensor); padded alongside U.
+    closure_fn(E, F, aux) -> (P_xx, P_yy, P_zz, P_xy, P_xz, P_yz)
+    speed_fn(axis, E, F, aux) -> max |wave speed| per cell along `axis`
+              (None: use c). The HLLE speed at a face is the max of both sides.
+
+    For each axis, one ghost cell is added on each side (periodic wrap or
+    zero-gradient outflow), fluxes are evaluated on all N+1 faces, and the
+    divergence is the face-flux difference per cell.
     """
-    # Positive energy proxies for closure stability
-    E  = jnp.maximum(U[..., 0], epsE)
-    F  = U[..., 1:4]
+    W = U if aux is None else jnp.concatenate([U, aux], axis=-1)
+    div = jnp.zeros_like(U)
+    for axis, h in enumerate((dx, dy, dz)):
+        Wp  = pad_ghost(W, axis, bc)                       # N+2 along axis
+        W_L = _slice_axis(Wp, axis, 0, -1)                 # N+1 left states
+        W_R = _slice_axis(Wp, axis, 1, None)               # N+1 right states
+        U_L, U_R = W_L[..., :4], W_R[..., :4]
+        A_L = None if aux is None else W_L[..., 4:]
+        A_R = None if aux is None else W_R[..., 4:]
+        E_L = jnp.maximum(U_L[..., 0], epsE)
+        E_R = jnp.maximum(U_R[..., 0], epsE)
+        F_L, F_R = U_L[..., 1:4], U_R[..., 1:4]
+        if speed_fn is None:
+            smax = c
+        else:
+            smax = jnp.maximum(speed_fn(axis, E_L, F_L, A_L),
+                               speed_fn(axis, E_R, F_R, A_R))[..., None]
+        F_face = hlle(physical_flux(axis, E_L, F_L, closure_fn(E_L, F_L, A_L), c),
+                      physical_flux(axis, E_R, F_R, closure_fn(E_R, F_R, A_R), c),
+                      U_L, U_R, smax=smax)                 # N+1 faces
+        div = div + (_slice_axis(F_face, axis, 1, None)
+                     - _slice_axis(F_face, axis, 0, -1)) / h
+    return div
 
-    # x-interfaces
-    U_R  = periodic_roll(U, -1, axis=0)
-    E_R  = jnp.maximum(U_R[..., 0], epsE)
-    F_R  = U_R[..., 1:4]
-    Fx_L = flux_x(E,  F,  c)
-    Fx_R = flux_x(E_R, F_R, c)
-    Fx_face = hlle(Fx_L, Fx_R, U, U_R, smax=c)
-    div_x = (Fx_face - periodic_roll(Fx_face, 1, axis=0)) / dx
 
-    # y-interfaces
-    U_R  = periodic_roll(U, -1, axis=1)
-    E_R  = jnp.maximum(U_R[..., 0], epsE)
-    F_R  = U_R[..., 1:4]
-    Fy_L = flux_y(E,  F,  c)
-    Fy_R = flux_y(E_R, F_R, c)
-    Fy_face = hlle(Fy_L, Fy_R, U, U_R, smax=c)
-    div_y = (Fy_face - periodic_roll(Fy_face, 1, axis=1)) / dy
-
-    # z-interfaces
-    U_R  = periodic_roll(U, -1, axis=2)
-    E_R  = jnp.maximum(U_R[..., 0], epsE)
-    F_R  = U_R[..., 1:4]
-    Fz_L = flux_z(E,  F,  c)
-    Fz_R = flux_z(E_R, F_R, c)
-    Fz_face = hlle(Fz_L, Fz_R, U, U_R, smax=c)
-    div_z = (Fz_face - periodic_roll(Fz_face, 1, axis=2)) / dz
-
-    return div_x + div_y + div_z
+def divergence_flux(U: Array, dx: float, dy: float, dz: float, c: float,
+                    epsE: float = 1e-12, bc: str = "outflow"):
+    """∇·F with the M1 closure (see divergence_flux_generic)."""
+    return divergence_flux_generic(U, None, lambda E, F, _: m1_closure(E, F, c),
+                                   dx, dy, dz, c, epsE=epsE, bc=bc)
 
 
 # ---------------------------
@@ -188,9 +199,12 @@ def enforce_positivity_and_causality(E: Array, F: Array, c: float, epsE: float =
 # Timestep control
 # ---------------------------
 
-def cfl_dt(dx: float, dy: float, dz: float, c: float, cfl: float = 0.4):
-    """Basic CFL step for wave speed ~ c."""
-    return cfl * min(dx, dy, dz) / c
+def cfl_dt(dx: float, dy: float, dz: float, c: float, cfl: float = 0.2):
+    """
+    CFL step for the dimensionally-unsplit first-order scheme with wave
+    speed c: stability requires dt * c * (1/dx + 1/dy + 1/dz) <= 1.
+    """
+    return cfl / (c * (1.0 / dx + 1.0 / dy + 1.0 / dz))
 
 
 # ---------------------------
@@ -203,8 +217,9 @@ class M1Config:
     dx: float = 1.0
     dy: float = 1.0
     dz: float = 1.0
-    cfl: float = 0.4
+    cfl: float = 0.2
     epsE: float = 1e-12
+    bc: str = "outflow"   # "outflow" or "periodic"
 
 
 @partial(jax.jit, static_argnums=(2,))  # cfg is the 3rd positional arg
@@ -213,14 +228,14 @@ def step_m1(U: Array, dt: float, cfg: M1Config,
             S_E: Array, S_F: Array):
     """
     One FV step:
-      1) Hyperbolic update (HLLE, periodic BC)
+      1) Hyperbolic update (HLLE, BC from cfg.bc)
       2) Positivity/causality limiter
       3) Implicit absorption/scattering
       4) Explicit volumetric sources (S_E, S_F)
       5) Positivity/causality limiter
     """
     # Hyperbolic update
-    divU   = divergence_flux(U, cfg.dx, cfg.dy, cfg.dz, cfg.c, epsE=cfg.epsE)
+    divU   = divergence_flux(U, cfg.dx, cfg.dy, cfg.dz, cfg.c, epsE=cfg.epsE, bc=cfg.bc)
     U_star = U - dt * divU
 
     # Pre-source limiter
@@ -266,4 +281,3 @@ def advance(U0: Array, nsteps: int, cfg: M1Config,
 
     Uf, _ = jax.lax.scan(body, U0, None, length=nsteps)
     return Uf
-
