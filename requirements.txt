@@ -1,0 +1,4 @@
+autocvd==0.2.1
+jax==0.12.0.1
+matplotlib==3.11.2
+numpy==2.5.4
