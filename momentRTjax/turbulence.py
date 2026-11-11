@@ -109,16 +109,10 @@ def random_point_sources(key, shape=(64, 64, 64), n_sources: int = 3,
     luminosities (n,) array.
     """
     k_pos, k_lum = random.split(key)
-<<<<<<< HEAD
-    lo = jnp.array([margin] * 3)
-    hi = jnp.array([n - margin for n in shape])
-    pos = random.randint(k_pos, (n_sources, 3), lo, hi)
-=======
     # distinct cells: draw without replacement from the flattened interior box
     inner = tuple(n - 2 * margin for n in shape)
     flat = random.choice(k_pos, int(np.prod(inner)), (n_sources,), replace=False)
     pos = jnp.stack(jnp.unravel_index(flat, inner), axis=-1) + margin
->>>>>>> upstream/main
     logL = random.uniform(k_lum, (n_sources,),
                           minval=jnp.log(L_range[0]), maxval=jnp.log(L_range[1]))
     L = jnp.exp(logL)

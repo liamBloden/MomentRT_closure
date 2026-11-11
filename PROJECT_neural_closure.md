@@ -19,11 +19,7 @@ tensor f_ij are implemented and benchmarked:
 
 | closure | where | what it does | cost / step (64^3, CPU) | multi-source error |
 |---|---|---|---|---|
-<<<<<<< HEAD
-| M1  | `momentRT.py::m1_closure` | algebraic: f_ij from the local ratio f = \abs(F)/(cE) and direction F/\abs(F) (Levermore) | 35 ms | 19 % (2 sources), 27 % (5 sources) |
-=======
 | M1  | `momentRT.py::m1_closure` | algebraic: f_ij from the local ratio f = |F|/(cE) and direction F/|F| (Levermore) | 35 ms | 19 % (2 sources), 27 % (5 sources) |
->>>>>>> upstream/main
 | VET | `vet.py` | formal solution of the transfer equation on ~192 directions, f_ij = P_ij/E; rebuilt every k steps | 64 ms + 1.1 s per tensor build | 10 % / 9 % |
 
 M1 is exact for a single point source and fails when beams cross (it merges

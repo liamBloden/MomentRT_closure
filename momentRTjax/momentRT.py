@@ -63,12 +63,6 @@ def m1_closure(E: Array, F: Array, c: float, eps: float = 1e-12):
 def physical_flux(axis: int, E: Array, F: Array, P6, c: float):
     """
     Flux of the conserved state U = [E, Fx, Fy, Fz] along `axis`, given the
-<<<<<<< HEAD
-    pressure tensor components P6 = (P_xx, P_yy, P_zz, P_xy, P_xz, P_yz):
-      axis 0: [ c F_x,  c^2 P_xx,  c^2 P_xy,  c^2 P_xz ]
-      axis 1: [ c F_y,  c^2 P_xy,  c^2 P_yy,  c^2 P_yz ]
-      axis 2: [ c F_z,  c^2 P_xz,  c^2 P_yz,  c^2 P_zz ]
-=======
     pressure tensor components P6 = (P_xx, P_yy, P_zz, P_xy, P_xz, P_yz).
     F is the physical energy flux (|F| <= c E, as assumed by the closure and
     the limiter), so the system is  dE/dt + div F = 0,  dF/dt + c^2 div P = 0:
@@ -76,34 +70,10 @@ def physical_flux(axis: int, E: Array, F: Array, P6, c: float):
       axis 1: [ F_y,  c^2 P_xy,  c^2 P_yy,  c^2 P_yz ]
       axis 2: [ F_z,  c^2 P_xz,  c^2 P_yz,  c^2 P_zz ]
     Wave speeds are +-c (free streaming), matching the HLLE bound and cfl_dt.
->>>>>>> upstream/main
     """
     P_xx, P_yy, P_zz, P_xy, P_xz, P_yz = P6
     rows = ((P_xx, P_xy, P_xz), (P_xy, P_yy, P_yz), (P_xz, P_yz, P_zz))[axis]
     c2 = c * c
-<<<<<<< HEAD
-    return jnp.stack([c * F[..., axis], c2 * rows[0], c2 * rows[1], c2 * rows[2]], axis=-1)
-
-def flux_x(E: Array, F: Array, c: float):
-    return physical_flux(0, E, F, m1_closure(E, F, c), c)
-
-def flux_y(E: Array, F: Array, c: float):
-    return physical_flux(1, E, F, m1_closure(E, F, c), c)
-
-def flux_z(E: Array, F: Array, c: float):
-    return physical_flux(2, E, F, m1_closure(E, F, c), c)
-
-
-# ---------------------------
-# HLLE numerical flux (symmetric speeds ±c)
-# ---------------------------
-
-def hlle(F_L: Array, F_R: Array, U_L: Array, U_R: Array, smax):
-    """HLLE flux with sL=-smax, sR=+smax (smax: scalar or per-face array)."""
-    return 0.5 * (F_L + F_R) - 0.5 * smax * (U_R - U_L)
-
-
-=======
     return jnp.stack([F[..., axis], c2 * rows[0], c2 * rows[1], c2 * rows[2]], axis=-1)
 
 
@@ -131,7 +101,6 @@ def ap_speed_factor(kappa_L: Array, kappa_R: Array, h: float) -> Array:
     return 1.0 / (1.0 + 0.5 * (kappa_L + kappa_R) * h) ** 2
 
 
->>>>>>> upstream/main
 # ---------------------------
 # Finite-volume utilities
 # ---------------------------
@@ -154,11 +123,7 @@ def _slice_axis(a: Array, axis: int, start, stop) -> Array:
 def divergence_flux_generic(U: Array, aux, closure_fn,
                             dx: float, dy: float, dz: float, c: float,
                             epsE: float = 1e-12, bc: str = "outflow",
-<<<<<<< HEAD
-                            speed_fn=None):
-=======
                             speed_fn=None, kappa: Array | None = None):
->>>>>>> upstream/main
     """
     Compute ∇·F with HLLE in x, y, z for an arbitrary closure.
 
@@ -168,20 +133,14 @@ def divergence_flux_generic(U: Array, aux, closure_fn,
     closure_fn(E, F, aux) -> (P_xx, P_yy, P_zz, P_xy, P_xz, P_yz)
     speed_fn(axis, E, F, aux) -> max |wave speed| per cell along `axis`
               (None: use c). The HLLE speed at a face is the max of both sides.
-<<<<<<< HEAD
-=======
     kappa   : (Nx, Ny, Nz) total opacity or None. If given, the HLLE speed is
               multiplied by ap_speed_factor so the scheme keeps the diffusion
               limit in optically thick cells.
->>>>>>> upstream/main
 
     For each axis, one ghost cell is added on each side (periodic wrap or
     zero-gradient outflow), fluxes are evaluated on all N+1 faces, and the
     divergence is the face-flux difference per cell.
     """
-<<<<<<< HEAD
-    W = U if aux is None else jnp.concatenate([U, aux], axis=-1)
-=======
     parts = [U]
     if aux is not None:
         parts.append(aux)
@@ -189,20 +148,11 @@ def divergence_flux_generic(U: Array, aux, closure_fn,
         parts.append(kappa[..., None])
     W = jnp.concatenate(parts, axis=-1) if len(parts) > 1 else U
     n_aux = 0 if aux is None else aux.shape[-1]
->>>>>>> upstream/main
     div = jnp.zeros_like(U)
     for axis, h in enumerate((dx, dy, dz)):
         Wp  = pad_ghost(W, axis, bc)                       # N+2 along axis
         W_L = _slice_axis(Wp, axis, 0, -1)                 # N+1 left states
         W_R = _slice_axis(Wp, axis, 1, None)               # N+1 right states
-<<<<<<< HEAD
-        U_L, U_R = W_L[..., :4], W_R[..., :4]
-        A_L = None if aux is None else W_L[..., 4:]
-        A_R = None if aux is None else W_R[..., 4:]
-        E_L = jnp.maximum(U_L[..., 0], epsE)
-        E_R = jnp.maximum(U_R[..., 0], epsE)
-        F_L, F_R = U_L[..., 1:4], U_R[..., 1:4]
-=======
         A_L = None if aux is None else W_L[..., 4:4 + n_aux]
         A_R = None if aux is None else W_R[..., 4:4 + n_aux]
         E_L = jnp.maximum(W_L[..., 0], epsE)
@@ -211,18 +161,14 @@ def divergence_flux_generic(U: Array, aux, closure_fn,
         # floored states, used consistently in the flux and the HLLE jump term
         U_L = jnp.concatenate([E_L[..., None], F_L], axis=-1)
         U_R = jnp.concatenate([E_R[..., None], F_R], axis=-1)
->>>>>>> upstream/main
         if speed_fn is None:
             smax = c
         else:
             smax = jnp.maximum(speed_fn(axis, E_L, F_L, A_L),
                                speed_fn(axis, E_R, F_R, A_R))[..., None]
-<<<<<<< HEAD
-=======
         if kappa is not None:
             k_L, k_R = W_L[..., 4 + n_aux], W_R[..., 4 + n_aux]
             smax = smax * ap_speed_factor(k_L, k_R, h)[..., None]
->>>>>>> upstream/main
         F_face = hlle(physical_flux(axis, E_L, F_L, closure_fn(E_L, F_L, A_L), c),
                       physical_flux(axis, E_R, F_R, closure_fn(E_R, F_R, A_R), c),
                       U_L, U_R, smax=smax)                 # N+1 faces
@@ -232,18 +178,11 @@ def divergence_flux_generic(U: Array, aux, closure_fn,
 
 
 def divergence_flux(U: Array, dx: float, dy: float, dz: float, c: float,
-<<<<<<< HEAD
-                    epsE: float = 1e-12, bc: str = "outflow"):
-    """∇·F with the M1 closure (see divergence_flux_generic)."""
-    return divergence_flux_generic(U, None, lambda E, F, _: m1_closure(E, F, c),
-                                   dx, dy, dz, c, epsE=epsE, bc=bc)
-=======
                     epsE: float = 1e-12, bc: str = "outflow",
                     kappa: Array | None = None):
     """∇·F with the M1 closure (see divergence_flux_generic)."""
     return divergence_flux_generic(U, None, lambda E, F, _: m1_closure(E, F, c),
                                    dx, dy, dz, c, epsE=epsE, bc=bc, kappa=kappa)
->>>>>>> upstream/main
 
 
 # ---------------------------
@@ -305,10 +244,7 @@ class M1Config:
     cfl: float = 0.2
     epsE: float = 1e-12
     bc: str = "outflow"   # "outflow" or "periodic"
-<<<<<<< HEAD
-=======
     ap: bool = True       # asymptotic-preserving HLLE dissipation (ap_speed_factor)
->>>>>>> upstream/main
 
 
 @partial(jax.jit, static_argnums=(2,))  # cfg is the 3rd positional arg
@@ -324,12 +260,8 @@ def step_m1(U: Array, dt: float, cfg: M1Config,
       5) Positivity/causality limiter
     """
     # Hyperbolic update
-<<<<<<< HEAD
-    divU   = divergence_flux(U, cfg.dx, cfg.dy, cfg.dz, cfg.c, epsE=cfg.epsE, bc=cfg.bc)
-=======
     divU   = divergence_flux(U, cfg.dx, cfg.dy, cfg.dz, cfg.c, epsE=cfg.epsE, bc=cfg.bc,
                              kappa=kappa_t if cfg.ap else None)
->>>>>>> upstream/main
     U_star = U - dt * divU
 
     # Pre-source limiter

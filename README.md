@@ -44,9 +44,6 @@ M1_DEVICE=cpu python main_vet_benchmark.py   # CPU, a few minutes
 ```
 
 Notes
-<<<<<<< HEAD
-- Stability: `dt · c · (1/dx + 1/dy + 1/dz) ≤ 1`; `cfl_dt` uses `cfl=0.2` of that.
-=======
 - Variables: `U = [E, Fx, Fy, Fz]` with `F` the *physical* energy flux
   (`|F| ≤ cE`), so the system is `∂E/∂t + ∇·F = 0`, `∂F/∂t + c²∇·P = 0` with
   wave speeds ±c. (An earlier version used `c·F` in the energy equation, which
@@ -61,26 +58,10 @@ Notes
   1D scattering slab (κ_a = 0.01), steady-state decay length vs. diffusion theory:
   `κ_t h = 2`: 4.7 (theory 4.1, 8.2 without); `κ_t h = 5`: 2.8 (theory 2.6, 7.5
   without). Free-streaming accuracy is unchanged (slightly better at κh ≪ 1).
->>>>>>> upstream/main
 - `kappa_t` is the total opacity on the flux (absorption + scattering). Set
   `kappa_t = kappa_a` for a pure absorber; a smaller value biases E by a few %.
 - VET: the grid must be cubic (`dx == dy == dz`). The formal solution is first
   order and shows ray effects between discrete directions; the *ratio* `P/E` is
-<<<<<<< HEAD
-  much less affected than `E_f` itself (tensor error ~3 % at 192 directions).
-- Remaining M1 error (~2.5 % in E) is first-order numerical diffusion plus the
-  four-lobed grid anisotropy of the closure; MUSCL reconstruction is the next step.
-
-## Results (64³, κ = 0.05, outflow, first order, 2026-10-15, CPU)
-
-Mean relative error of E on the shell 2 ≤ r ≤ 0.45 N around every source:
-
-| case          | M1     | VET (192 dirs, smooth=1) |
-|---------------|--------|--------------------------|
-| single source | 2.5 %  | 7.7 %                    |
-| two sources   | 19.2 % | 10.5 %                   |
-| five sources  | 26.8 % | 8.6 %                    |
-=======
   much less affected than `E_f` itself. The quadrature weights are corrected
   (least-squares, `quadrature_weights`) so that `∫dΩ` and `∫n_i n_j dΩ` are
   exact: an isotropic field gives `f_ij = δ_ij/3` to 1e-6 (uniform weights were
@@ -105,7 +86,6 @@ Mean relative error of E on the shell 2 ≤ r ≤ 0.45 N around every source
 dissipation at κh = 0.05, which was partly smearing the closure errors in the
 multi-source cases; set `ap=False` to reproduce the old numbers. The corrected
 weights improve VET by 0.3–0.9 points.)
->>>>>>> upstream/main
 
 M1 is exact for one point source by construction, so it wins there; its error
 in the multi-source cases is the well-known beam-merging failure (bright band
