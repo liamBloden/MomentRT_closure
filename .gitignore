@@ -1,7 +1,10 @@
 __pycache__/
 *.pyc
+<<<<<<< HEAD
 
 # Python virtual environments 
 .venv/
 venv/
 env/
+=======
+>>>>>>> upstream/main

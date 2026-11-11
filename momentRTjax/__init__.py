@@ -9,9 +9,17 @@ import importlib
 _EXPORTS = {
     "momentRT": ("M1Config", "advance", "step_m1", "cfl_dt", "divergence_flux",
                  "divergence_flux_generic", "m1_closure", "physical_flux",
+<<<<<<< HEAD
                  "source_implicit", "enforce_positivity_and_causality"),
     "vet": ("VETConfig", "fibonacci_directions", "DirectionSet", "formal_solution",
             "eddington_tensor", "step_vet", "advance_vet", "compute_vet"),
+=======
+                 "ap_speed_factor", "source_implicit",
+                 "enforce_positivity_and_causality"),
+    "vet": ("VETConfig", "fibonacci_directions", "DirectionSet", "default_dirset",
+            "formal_solution", "eddington_tensor", "step_vet", "advance_vet",
+            "compute_vet"),
+>>>>>>> upstream/main
     "devices": ("select_device",),
     "turbulence": ("gaussian_field", "lognormal_field", "top_percentile_mask",
                    "turbulent_opacity", "random_point_sources", "random_setup",

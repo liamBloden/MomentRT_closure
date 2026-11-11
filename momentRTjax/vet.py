@@ -16,7 +16,11 @@
 
 from __future__ import annotations
 from dataclasses import dataclass
+<<<<<<< HEAD
 from functools import partial
+=======
+from functools import partial, lru_cache
+>>>>>>> upstream/main
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -54,7 +58,13 @@ def fibonacci_directions(n: int, symmetric: bool = True) -> np.ndarray:
         d = lattice(m)
         oct_ = d[(d > 0).all(axis=1)]
         if len(oct_) >= n_oct:
+<<<<<<< HEAD
             oct_ = oct_[:n_oct]
+=======
+            # drop the surplus evenly in polar order rather than only near the equator
+            keep = np.round(np.linspace(0, len(oct_) - 1, n_oct)).astype(int)
+            oct_ = oct_[keep]
+>>>>>>> upstream/main
             break
         m += 8
     signs = np.array([[sx, sy, sz] for sx in (1, -1) for sy in (1, -1) for sz in (1, -1)])
@@ -70,20 +80,54 @@ class DirectionSet:
     def __init__(self, n_dirs: int, symmetric: bool = True):
         dirs = fibonacci_directions(n_dirs, symmetric)
         self.n_dirs = len(dirs)
+<<<<<<< HEAD
         self.weight = 4.0 * np.pi / self.n_dirs
         dom = np.argmax(np.abs(dirs), axis=1)
         self.groups = []   # list of (axis, sign, (m,3) directions)
+=======
+        self.weight = quadrature_weights(dirs)          # (n,), sums to 4 pi
+        dom = np.argmax(np.abs(dirs), axis=1)
+        self.groups = []   # list of (axis, sign, (m,3) directions, (m,) weights)
+>>>>>>> upstream/main
         for axis in range(3):
             for sign in (+1, -1):
                 sel = (dom == axis) & (np.sign(dirs[:, axis]) == sign)
                 if sel.any():
+<<<<<<< HEAD
                     self.groups.append((axis, sign, jnp.asarray(dirs[sel])))
+=======
+                    self.groups.append((axis, sign, jnp.asarray(dirs[sel]),
+                                        jnp.asarray(self.weight[sel])))
+>>>>>>> upstream/main
 
     def tree(self):
         """pytree of direction arrays, in group order (static structure)."""
         return tuple(g[2] for g in self.groups)
 
 
+<<<<<<< HEAD
+=======
+def quadrature_weights(dirs: np.ndarray) -> np.ndarray:
+    """
+    Weights closest (least squares) to uniform 4 pi / n that integrate 1 and
+    n_i n_j exactly over the sphere:  sum w = 4 pi,  sum w n_i n_j = 4 pi/3 d_ij.
+    A uniform-weight Fibonacci set gets the second moments wrong by ~2 % at
+    192 directions, which would bias the Eddington tensor of an isotropic
+    field away from d_ij / 3.
+    """
+    n = len(dirs)
+    w0 = np.full(n, 4.0 * np.pi / n)
+    nx, ny, nz = dirs.T
+    A = np.stack([np.ones(n), nx * nx, ny * ny, nz * nz, nx * ny, nx * nz, ny * nz])
+    b = np.array([4 * np.pi] + [4 * np.pi / 3] * 3 + [0.0] * 3)
+    # minimal-norm correction: w = w0 + A^T lam,  (A A^T) lam = b - A w0  (A is rank 6)
+    lam = np.linalg.lstsq(A @ A.T, b - A @ w0, rcond=None)[0]
+    w = w0 + A.T @ lam
+    assert (w > 0).all(), "quadrature weights must stay positive"
+    return w
+
+
+>>>>>>> upstream/main
 # ---------------------------
 # Short-characteristics formal solution
 # ---------------------------
@@ -136,6 +180,7 @@ def _sweep_group(j: Array, kappa: Array, dirs: Array, axis: int, sign: int,
     ds = h / na                         # path length through one plane
     db = nb / na                        # transverse shift per plane (cells)
     dc = nc / na
+<<<<<<< HEAD
 
     tau = kt[None] * ds[:, None, None, None]                  # (m,N,N,N)
     att = jnp.exp(-tau)
@@ -143,12 +188,31 @@ def _sweep_group(j: Array, kappa: Array, dirs: Array, axis: int, sign: int,
     src = jt[None] * jnp.where(tau > 1e-8,
                                -jnp.expm1(-tau) / jnp.maximum(kt[None], 1e-300),
                                ds[:, None, None, None] * (1.0 - 0.5 * tau))
+=======
+    ds3 = ds[:, None, None]
+
+    def plane_coeffs(k):
+        """Attenuation and source integral of plane k for all m directions,
+        computed on the fly (keeps memory at O(m N^2) instead of O(m N^3))."""
+        tau = kt[k][None] * ds3                               # (m,N,N)
+        att = jnp.exp(-tau)
+        # source integral  ∫ j e^{-τ'} ds'  with constant j, kappa in the cell
+        src = jt[k][None] * jnp.where(tau > 1e-8,
+                                      -jnp.expm1(-tau) / jnp.maximum(kt[k][None], 1e-300),
+                                      ds3 * (1.0 - 0.5 * tau))
+        return att, src
+>>>>>>> upstream/main
 
     def one_pass(I_in):
         def body(I_prev, k):
             up = _upwind_interp(I_prev, db, 1, bc)
             up = _upwind_interp(up, dc, 2, bc)
+<<<<<<< HEAD
             I_k = up * att[:, k] + src[:, k]
+=======
+            att, src = plane_coeffs(k)
+            I_k = up * att + src
+>>>>>>> upstream/main
             return I_k, I_k
         _, I_planes = jax.lax.scan(body, I_in, jnp.arange(jt.shape[0]))
         return jnp.moveaxis(I_planes, 0, 1)                    # (m,N,N,N)
@@ -173,6 +237,7 @@ def formal_solution(j: Array, kappa: Array, dirset: DirectionSet, h: float,
       E_f  = (1/c) Σ_d w I_d
       P6_f = (1/c) Σ_d w I_d n_i n_j      (xx, yy, zz, xy, xz, yz)
     """
+<<<<<<< HEAD
     w = dirset.weight / c
     E_f = jnp.zeros_like(j)
     P = [jnp.zeros_like(j) for _ in range(6)]
@@ -182,6 +247,17 @@ def formal_solution(j: Array, kappa: Array, dirset: DirectionSet, h: float,
         E_f = E_f + w * jnp.sum(I, axis=0)
         for q, nn in enumerate((nx*nx, ny*ny, nz*nz, nx*ny, nx*nz, ny*nz)):
             P[q] = P[q] + w * jnp.sum(I * nn, axis=0)
+=======
+    E_f = jnp.zeros_like(j)
+    P = [jnp.zeros_like(j) for _ in range(6)]
+    for (axis, sign, dirs, wg) in dirset.groups:
+        I = _sweep_group(j, kappa, dirs, axis, sign, h, bc, n_pass)   # (m,N,N,N)
+        w = (wg / c)[:, None, None, None]
+        nx, ny, nz = (dirs[:, i][:, None, None, None] for i in range(3))
+        E_f = E_f + jnp.sum(w * I, axis=0)
+        for q, nn in enumerate((nx*nx, ny*ny, nz*nz, nx*ny, nx*nz, ny*nz)):
+            P[q] = P[q] + jnp.sum(w * I * nn, axis=0)
+>>>>>>> upstream/main
     return E_f, tuple(P)
 
 
@@ -255,7 +331,12 @@ def step_vet(U: Array, dt: float, cfg: VETConfig, f6: Array,
     divU   = divergence_flux_generic(U, f6, _vet_closure,
                                      cfg.dx, cfg.dy, cfg.dz, cfg.c,
                                      epsE=cfg.epsE, bc=cfg.bc,
+<<<<<<< HEAD
                                      speed_fn=_vet_speed(cfg))
+=======
+                                     speed_fn=_vet_speed(cfg),
+                                     kappa=kappa_t if cfg.ap else None)
+>>>>>>> upstream/main
     U_star = U - dt * divU
 
     E_star = jnp.maximum(U_star[..., 0], cfg.epsE)
@@ -282,6 +363,27 @@ def compute_vet(U: Array, aux, cfg: VETConfig, dirset: DirectionSet):
     return eddington_tensor(E_f, P6_f)
 
 
+<<<<<<< HEAD
+=======
+@partial(jax.jit, static_argnums=(3,))
+def _advance_frozen(U: Array, f6: Array, dt: float, cfg: VETConfig,
+                    kappa_a: Array, kappa_t: Array, E_eq: Array,
+                    S_E: Array, S_F: Array):
+    """cfg.vet_every steps with a frozen tensor. Module-level and jitted so the
+    scan is compiled once per (shape, cfg), not once per tensor rebuild."""
+    def body(U, _):
+        return step_vet(U, dt, cfg, f6, kappa_a, kappa_t, E_eq, S_E, S_F), None
+    return jax.lax.scan(body, U, None, length=cfg.vet_every)[0]
+
+
+@lru_cache(maxsize=None)
+def default_dirset(n_dirs: int) -> DirectionSet:
+    """One DirectionSet per n_dirs, reused across calls so that compute_vet
+    (which takes it as a static argument) is not retraced every call."""
+    return DirectionSet(n_dirs)
+
+
+>>>>>>> upstream/main
 def advance_vet(U0: Array, nsteps: int, cfg: VETConfig,
                 kappa_a: Array, kappa_t: Array, E_eq: Array,
                 dt: float | None = None,
@@ -300,19 +402,30 @@ def advance_vet(U0: Array, nsteps: int, cfg: VETConfig,
     if S_F is None:
         S_F = jnp.zeros_like(U0[..., 1:4])
     if dirset is None:
+<<<<<<< HEAD
         dirset = DirectionSet(cfg.n_dirs)
+=======
+        dirset = default_dirset(cfg.n_dirs)
+>>>>>>> upstream/main
 
     n_outer = -(-nsteps // cfg.vet_every)
     aux = (kappa_a, kappa_t, E_eq, S_E)
 
+<<<<<<< HEAD
     def inner(U, f6):
         def body(U, _):
             return step_vet(U, dt, cfg, f6, kappa_a, kappa_t, E_eq, S_E, S_F), None
         return jax.lax.scan(body, U, None, length=cfg.vet_every)[0]
 
+=======
+>>>>>>> upstream/main
     U = U0
     f6 = None
     for _ in range(n_outer):
         f6 = compute_vet(U, aux, cfg, dirset)
+<<<<<<< HEAD
         U = inner(U, f6)
+=======
+        U = _advance_frozen(U, f6, dt, cfg, kappa_a, kappa_t, E_eq, S_E, S_F)
+>>>>>>> upstream/main
     return (U, f6) if return_tensor else U
