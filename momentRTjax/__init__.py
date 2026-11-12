@@ -16,8 +16,8 @@ _EXPORTS = {
             "compute_vet"),
     "devices": ("select_device",),
     "turbulence": ("gaussian_field", "lognormal_field", "top_percentile_mask",
-                   "turbulent_opacity", "random_point_sources", "random_setup",
-                   "optical_depth_stats"),
+                   "turbulent_opacity", "random_point_sources", "dense_point_sources",
+                   "random_setup", "save_setup", "load_setup", "optical_depth_stats"),
 }
 _LOOKUP = {name: mod for mod, names in _EXPORTS.items() for name in names}
 

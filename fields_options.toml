@@ -1,0 +1,32 @@
+# fields_options.toml
+# Options for generate_fields.py:
+#   python generate_fields.py                  (reads this file)
+#   python generate_fields.py my_options.toml  (reads another one)
+#
+# A parameter given as [LO, HI] is drawn per sample from the sample's seed;
+# a single number fixes it (percentile = 99 -> always the top 1 %).
+# With every range fixed, only the seed varies.
+# Every option below is required.
+
+# ---- run ----
+out       = "data/fields"   # output directory
+n         = 100             # number of samples
+seed0     = 0               # sample i uses the seed seed0 + i
+N         = 64              # grid size (N^3 cells, cell size h = 1)
+preview   = 8               # samples shown in preview.png (0 = no figure)
+overwrite = false           # true: replace an existing set in `out`
+
+# ---- stars (emission) ----
+# Every cell above this percentile of the opacity field is a star, so it sets
+# the number of stars: (1 - percentile/100) * N^3  (at 64^3: 99 -> 2622,
+# 99.99 -> 27). Drawn log-uniform in the star fraction 100 - percentile.
+percentile = [99.0, 99.99]
+L_range    = [0.3, 2.0]     # luminosity of each star, log-uniform
+margin     = 0              # drop star cells closer than this to a wall (cells)
+
+# ---- opacity (absorption) ----
+kappa_mean  = [0.01, 0.1]   # mean opacity per cell, log-uniform (box optical depth = kappa_mean * N)
+sigma_g     = [0.0, 1.5]    # log-normal contrast, uniform
+corr_length = [10.0, 40.0]  # generator scale in cells, log-uniform (structures are ~corr_length / 7.5 cells wide)
+spectrum    = "logk"        # "logk" or "powerlaw"
+albedo      = 0.0           # scattering albedo (0 = pure absorber)

@@ -16,8 +16,26 @@ Minimal 3D gray two-moment (M1) radiative transfer solver.
   ported from Ray-trax `create_turbulent_3D.py`: `gaussian_field`,
   `lognormal_field` (log-k bump or power-law spectrum, correlation length in
   cells), `turbulent_opacity` → (kappa_a, kappa_t) with optional albedo,
-  `random_point_sources`, and `random_setup(key, ...)` returning everything
-  `advance` / `advance_vet` need. Intended for dataset generation.
+  `random_point_sources`, `dense_point_sources` (a star in every cell above a
+  density percentile, the Ray-trax criterion), and `random_setup(key, ...)`
+  returning everything `advance` / `advance_vet` need; `save_setup` /
+  `load_setup` write and read one problem as `.npz`. Intended for dataset
+  generation.
+  `corr_length` is the wavelength at the peak of P(k), not the structure
+  size: the autocorrelation falls to 0.5 at ~`corr_length / 7.5` cells.
+- `generate_fields.py` — builds a set of absorption + emission fields (no
+  solver run). Stars follow a density criterion: every cell above a
+  percentile of the opacity is a star (99 = top 1 %), so the percentile sets
+  the number of stars. All options are in `fields_options.toml` (documented
+  there); run `python generate_fields.py [options file]`. Per sample, from
+  its seed: the percentile (99–99.99, i.e. 2622–27 stars at 64³, log-uniform
+  in the star fraction), `kappa_mean` (log-uniform), `sigma_g`,
+  `corr_length` (log-uniform) and one luminosity per star; each is a
+  `[LO, HI]` range, or one number to fix it (`percentile = 99` = always the
+  top 1 %). Writes `sample_<seed>.npz`, `manifest.json` (options, plus
+  parameters, star count and optical depths per sample) and `preview.png`
+  to `data/fields/` (option `out`; `data/` is git-ignored). CPU by default,
+  ~0.5 s and 1 MB per 64³ sample.
 - `momentRTjax/devices.py` — `select_device()`: picks a free GPU with autocvd
   (default mode, waits until a card is completely free). Call it before
   importing JAX. `M1_DEVICE=cpu` forces the CPU.
