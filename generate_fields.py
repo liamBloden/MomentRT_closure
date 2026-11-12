@@ -10,8 +10,10 @@
 #
 # All options live in an options file (fields_options.toml, documented there).
 # Sample i is fully determined by its seed (seed0 + i) and that file. Drawn
-# from the seed, per sample: percentile, kappa_mean, sigma_g, corr_length (each
-# a [LO, HI] range, or a single number to fix it) and one luminosity per star.
+# from the seed, per sample: percentile, kappa_mean, sigma_g, corr_length,
+# star_gas_removal (each a [LO, HI] range, or a single number to fix it) and
+# one luminosity per star. star_gas_removal > 0 removes that fraction of the
+# gas from the star cells once the stars are placed (mimics star formation).
 #
 # Output (option `out`):
 #   sample_<seed>.npz   kappa_a, S_E (float32), positions, luminosities, parameters;
@@ -44,7 +46,8 @@ from momentRTjax.turbulence import random_setup, save_setup
 
 
 DEFAULT_OPTIONS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fields_options.toml")
-RANGES = ("percentile", "kappa_mean", "sigma_g", "corr_length", "L_range")   # [LO, HI] or one number
+RANGES = ("percentile", "kappa_mean", "sigma_g", "corr_length", "L_range",
+          "star_gas_removal")                                                # [LO, HI] or one number
 OPTIONS = set(RANGES) | {"out", "n", "seed0", "N", "preview", "overwrite", "margin", "spectrum", "albedo"}
 
 
@@ -62,6 +65,8 @@ def load_options(path):
         opts[k] = (float(v[0]), float(v[1]))
     if not 0.0 <= opts["percentile"][0] <= opts["percentile"][1] < 100.0:
         raise SystemExit(f"{path}: percentile needs 0 <= LO <= HI < 100")
+    if not 0.0 <= opts["star_gas_removal"][0] <= opts["star_gas_removal"][1] <= 1.0:
+        raise SystemExit(f"{path}: star_gas_removal needs 0 <= LO <= HI <= 1")
     if opts["spectrum"] not in ("logk", "powerlaw"):
         raise SystemExit(f"{path}: spectrum must be 'logk' or 'powerlaw'")
     return SimpleNamespace(**opts)
@@ -69,7 +74,7 @@ def load_options(path):
 
 def draw_params(key, a):
     """Per-sample generator parameters, drawn from the sample's key."""
-    k_pct, k_kappa, k_sigma, k_corr = random.split(key, 4)
+    k_pct, k_kappa, k_sigma, k_corr, k_gas = random.split(key, 5)
 
     def uniform(k, lo, hi, log=False):
         if lo == hi:                     # fixed parameter: return it exactly
@@ -82,7 +87,8 @@ def draw_params(key, a):
                 else 100.0 - uniform(k_pct, 100.0 - p_lo, 100.0 - p_hi, log=True),
                 kappa_mean=uniform(k_kappa, *a.kappa_mean, log=True),
                 sigma_g=uniform(k_sigma, *a.sigma_g),
-                corr_length=uniform(k_corr, *a.corr_length, log=True))
+                corr_length=uniform(k_corr, *a.corr_length, log=True),
+                star_gas_removal=uniform(k_gas, *a.star_gas_removal))
 
 
 def plot_preview(panels, path):
@@ -93,7 +99,9 @@ def plot_preview(panels, path):
     for ax in axes.ravel()[len(panels):]:
         ax.axis("off")
     for ax, (row, kappa_slice, stars, z0) in zip(axes.ravel(), panels):
-        im = ax.imshow(np.log10(kappa_slice), origin="lower", cmap="cividis")
+        # emptied star cells (kappa = 0) are left blank under their markers
+        im = ax.imshow(np.log10(np.where(kappa_slice > 0, kappa_slice, np.nan)),
+                       origin="lower", cmap="cividis")
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
         ax.scatter(stars[:, 1], stars[:, 0], s=16, c="white", edgecolors="black", linewidths=0.6,
                    label="star cell")
@@ -130,7 +138,8 @@ def main():
         setup = random_setup(k_setup, shape, albedo=a.albedo, L_range=a.L_range,
                              margin=a.margin, spectrum=a.spectrum,
                              source_percentile=par["percentile"], kappa_mean=par["kappa_mean"],
-                             sigma_g=par["sigma_g"], corr_length=par["corr_length"])
+                             sigma_g=par["sigma_g"], corr_length=par["corr_length"],
+                             star_gas_removal=par["star_gas_removal"])
         name = f"sample_{seed:06d}.npz"
         save_setup(os.path.join(a.out, name), setup, seed=seed, albedo=a.albedo, **par)
 
@@ -138,7 +147,8 @@ def main():
         pos = np.asarray(setup["positions"])
         ksrc = kappa[pos[:, 0], pos[:, 1], pos[:, 2]]           # optical depth of the star cells (h = 1)
         row = dict(file=name, seed=seed, **par,
-                   tau_box=par["kappa_mean"] * a.N,             # mean optical depth across the box
+                   tau_box=float(kappa.mean()) * a.N,           # mean optical depth across the box
+                   gas_removed=1.0 - float(kappa.mean()) / par["kappa_mean"],   # share of all the gas taken by the stars
                    n_stars=len(pos), L_tot=float(np.asarray(setup["luminosities"]).sum()),
                    kappa_min=float(kappa.min()), kappa_max=float(kappa.max()),
                    kappa_star_min=float(ksrc.min()), kappa_star_median=float(np.median(ksrc)))
@@ -163,6 +173,9 @@ def main():
           f"(median {np.median(col('tau_box')):.2f})")
     print(f"  optical depth of a star cell (per-sample median): {col('kappa_star_median').min():.3f} .. "
           f"{col('kappa_star_median').max():.3f}")
+    if col("star_gas_removal").max() > 0:
+        print(f"  gas removed from star cells: {100 * col('gas_removed').min():.1f} .. "
+              f"{100 * col('gas_removed').max():.1f} % of the box's gas")
 
 
 if __name__ == "__main__":

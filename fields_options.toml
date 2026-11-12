@@ -23,6 +23,10 @@ overwrite = false           # true: replace an existing set in `out`
 percentile = [99.0, 99.99]
 L_range    = [0.3, 2.0]     # luminosity of each star, log-uniform
 margin     = 0              # drop star cells closer than this to a wall (cells)
+# Star formation: fraction of the gas (opacity) removed from every cell that
+# hosts a star, after the stars are chosen on the original field.
+# 0 = off, 1 = the star cells are emptied; [LO, HI] is drawn uniformly.
+star_gas_removal = 0.0
 
 # ---- opacity (absorption) ----
 kappa_mean  = [0.01, 0.1]   # mean opacity per cell, log-uniform (box optical depth = kappa_mean * N)

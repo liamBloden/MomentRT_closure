@@ -162,7 +162,8 @@ def random_setup(key, shape=(64, 64, 64), n_sources: int = 3,
                  corr_length: float = 10.0, albedo: float = 0.0,
                  L_range=(0.3, 2.0), margin: int = 8, E_floor: float = 1e-6,
                  spectrum: str = "logk", slope: float = 11.0 / 3.0,
-                 cell_volume: float = 1.0, source_percentile: float | None = None):
+                 cell_volume: float = 1.0, source_percentile: float | None = None,
+                 star_gas_removal: float = 0.0):
     """
     One random problem for `advance` / `advance_vet`:
       U0, kappa_a, kappa_t, E_eq, S_E   (+ positions, luminosities, key split)
@@ -174,6 +175,12 @@ def random_setup(key, shape=(64, 64, 64), n_sources: int = 3,
                         gas density (dense_point_sources; 99 = top 1 %).
                         n_sources is then ignored and `margin` is applied as
                         given (0 keeps the whole top percentile).
+    star_gas_removal  : fraction of the gas removed from every cell that hosts
+                        a source, after the sources are placed (mimics star
+                        formation consuming the gas): kappa_a and kappa_t of
+                        those cells are multiplied by 1 - star_gas_removal.
+                        0 = off, 1 = the cells are emptied. The mean opacity
+                        then falls below kappa_mean.
     """
     k_kappa, k_src = random.split(key)
     kappa_a, kappa_t = turbulent_opacity(k_kappa, shape, kappa_mean, sigma_g,
@@ -183,6 +190,9 @@ def random_setup(key, shape=(64, 64, 64), n_sources: int = 3,
     else:
         S_E, pos, L = dense_point_sources(k_src, kappa_t, source_percentile,
                                           L_range, margin, cell_volume)
+    if star_gas_removal > 0.0:
+        keep = jnp.ones(shape).at[pos[:, 0], pos[:, 1], pos[:, 2]].set(1.0 - star_gas_removal)
+        kappa_a, kappa_t = kappa_a * keep, kappa_t * keep
     U0 = jnp.concatenate([jnp.full(shape + (1,), E_floor), jnp.zeros(shape + (3,))], -1)
     return dict(U0=U0, kappa_a=kappa_a, kappa_t=kappa_t, E_eq=jnp.zeros(shape),
                 S_E=S_E, positions=pos, luminosities=L)
