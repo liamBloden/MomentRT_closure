@@ -34,8 +34,9 @@ Minimal 3D gray two-moment (M1) radiative transfer solver.
   `[LO, HI]` range, or one number to fix it (`percentile = 99` = always the
   top 1 %). `star_gas_removal` (default 0 = off) removes that fraction of
   the gas from the star cells after the stars are placed, to mimic star
-  formation; 1 empties them. Writes `sample_<seed>.npz`, `manifest.json` (options, plus
-  parameters, star count and optical depths per sample) and `preview.png`
+  formation; 1 empties them. Writes `npz-files/sample_<index:06d>.npz` (the
+  `npz-files/` folder is emptied before each run), `manifest.json` (options,
+  plus parameters, star count and optical depths per sample) and `preview.png`
   to `data/fields/` (option `out`; `data/` is git-ignored). CPU by default,
   ~0.5 s and 1 MB per 64³ sample.
 - `momentRTjax/devices.py` — `select_device()`: picks a free GPU with autocvd

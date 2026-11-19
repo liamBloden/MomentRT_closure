@@ -16,8 +16,8 @@
 # gas from the star cells once the stars are placed (mimics star formation).
 #
 # Output (option `out`):
-#   sample_<seed>.npz   kappa_a, S_E (float32), positions, luminosities, parameters;
-#                       read back with momentRTjax.turbulence.load_setup
+#   npz-files/sample_<index:06d>.npz   kappa_a, S_E (float32), positions, luminosities,
+#                                     parameters; read back with momentRTjax.turbulence.load_setup
 #   manifest.json       options + one row per sample (parameters, star count, optical depths)
 #   preview.png         opacity slices of the first `preview` samples with their star cells
 #
@@ -32,6 +32,7 @@ select_device()
 
 import argparse
 import json
+import shutil
 import tomllib
 from types import SimpleNamespace
 import numpy as np
@@ -128,6 +129,13 @@ def main():
     if os.path.exists(manifest_path) and not a.overwrite:
         raise SystemExit(f"{manifest_path} exists: change `out` or set overwrite = true in the options file")
     os.makedirs(a.out, exist_ok=True)
+    npz_dir = os.path.join(a.out, "npz-files")
+    os.makedirs(npz_dir, exist_ok=True)
+    for entry in os.scandir(npz_dir):
+        if entry.is_dir(follow_symlinks=False):
+            shutil.rmtree(entry.path)
+        else:
+            os.unlink(entry.path)
     shape = (a.N, a.N, a.N)
 
     rows, panels = [], []
@@ -140,8 +148,8 @@ def main():
                              source_percentile=par["percentile"], kappa_mean=par["kappa_mean"],
                              sigma_g=par["sigma_g"], corr_length=par["corr_length"],
                              star_gas_removal=par["star_gas_removal"])
-        name = f"sample_{seed:06d}.npz"
-        save_setup(os.path.join(a.out, name), setup, seed=seed, albedo=a.albedo, **par)
+        name = f"sample_{i:06d}.npz"
+        save_setup(os.path.join(npz_dir, name), setup, seed=seed, albedo=a.albedo, **par)
 
         kappa = np.asarray(setup["kappa_t"])
         pos = np.asarray(setup["positions"])
